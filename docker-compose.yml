@@ -1,0 +1,67 @@
+services:
+  traefik:
+    image: 'traefik'
+    restart: always
+    command:
+      - '--api=true'
+      - '--api.insecure=true'
+      - '--providers.docker=true'
+      - '--providers.docker.exposedbydefault=false'
+      - '--entrypoints.web.address=:80'
+      - '--entrypoints.web.http.redirections.entryPoint.to=websecure'
+      - '--entrypoints.web.http.redirections.entrypoint.scheme=https'
+      - '--entrypoints.websecure.address=:443'
+      - '--certificatesresolvers.le.acme.tlschallenge=true'
+      - '--certificatesresolvers.le.acme.email=${SSL_EMAIL}'
+      - '--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json'
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - traefik_data:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  rocketchat:
+    image: registry.rocket.chat/rocketchat/rocket.chat:${RELEASE:-latest}
+    restart: always
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.rocketchat.rule=Host(`${ROCKETCHAT_SUBDOMAIN}.${DOMAIN}`)
+      - traefik.http.routers.rocketchat.tls=true
+      - traefik.http.routers.rocketchat.entrypoints=websecure
+      - traefik.http.routers.rocketchat.tls.certresolver=le
+      - traefik.http.services.rocketchat.loadbalancer.server.port=${PORT:-3000}
+    environment:
+      MONGO_URL: '${MONGO_URL:-mongodb://${MONGODB_ADVERTISED_HOSTNAME:-mongodb}:${MONGODB_INITIAL_PRIMARY_PORT_NUMBER:-27017}/${MONGODB_DATABASE:-rocketchat}?replicaSet=${MONGODB_REPLICA_SET_NAME:-rs0}}'
+      MONGO_OPLOG_URL: '${MONGO_OPLOG_URL:-mongodb://${MONGODB_ADVERTISED_HOSTNAME:-mongodb}:${MONGODB_INITIAL_PRIMARY_PORT_NUMBER:-27017}/local?replicaSet=${MONGODB_REPLICA_SET_NAME:-rs0}}'
+      ROOT_URL: ${ROOT_URL:-https://${ROCKETCHAT_SUBDOMAIN}.${DOMAIN}}
+      PORT: ${PORT:-3000}
+      DEPLOY_METHOD: docker
+      DEPLOY_PLATFORM: ${DEPLOY_PLATFORM:-}
+      REG_TOKEN: ${REG_TOKEN:-}
+      NODE_ENV: production
+    depends_on:
+      - mongodb
+    expose:
+      - ${PORT:-3000}
+
+  mongodb:
+    image: docker.io/bitnami/mongodb:${MONGODB_VERSION:-5.0}
+    restart: always
+    volumes:
+      - mongodb_data:/bitnami/mongodb
+    environment:
+      MONGODB_REPLICA_SET_MODE: primary
+      MONGODB_REPLICA_SET_NAME: ${MONGODB_REPLICA_SET_NAME:-rs0}
+      MONGODB_PORT_NUMBER: ${MONGODB_PORT_NUMBER:-27017}
+      MONGODB_INITIAL_PRIMARY_HOST: ${MONGODB_INITIAL_PRIMARY_HOST:-mongodb}
+      MONGODB_INITIAL_PRIMARY_PORT_NUMBER: ${MONGODB_INITIAL_PRIMARY_PORT_NUMBER:-27017}
+      MONGODB_ADVERTISED_HOSTNAME: ${MONGODB_ADVERTISED_HOSTNAME:-mongodb}
+      MONGODB_ENABLE_JOURNAL: ${MONGODB_ENABLE_JOURNAL:-true}
+      ALLOW_EMPTY_PASSWORD: ${ALLOW_EMPTY_PASSWORD:-yes}
+
+volumes:
+  mongodb_data:
+    driver: local
+  traefik_data:
+    external: true
